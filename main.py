@@ -4,6 +4,7 @@ from asyncio import subprocess
 from icecream import ic
 import cv2
 from multiprocessing import Process, Queue
+from threading import Thread
 from subprocess import Popen, PIPE
 from signal import pause
 import time
@@ -12,7 +13,7 @@ class CameraNotFound(Exception):
     pass
 
 class Camera(Process):
-    def __init__(self, v4l_cam_id: str = "/dev/video0", image_w_h: tuple = (1920,1080), window_name: str = "WebCam", render_window:bool = True) -> None:
+    def __init__(self, v4l_cam_id: int | str = "/dev/video0", image_w_h: tuple = (1920,1080), window_name: str = "WebCam", render_window:bool = True) -> None:
     
         self.process = super().__init__(target=self,daemon=True)
         self.q = Queue()
@@ -22,14 +23,17 @@ class Camera(Process):
         self.cam_inst = None
         self._living_process = False
         self._render = render_window
+        self.thread = Thread(target=self._framegrabber, daemon=True)
+        self.time_then = time.time()
+        self.count = 0
         
     def run(self):
 
         self._connect()
         self._configure_camera()
         self._living_process = True
+        self.thread.start()
         if self._render: self.preview()
-        self._framegrabber()
     
     def _connect(self):
 
@@ -56,17 +60,27 @@ class Camera(Process):
         return self.q.get()
 
     def preview(self):
-        stat, frame = self._new_frame()
-        while self._living_process and stat:
+        while self._living_process:
+            frame = self.q.get()
+            self.count+=1
+            self._frames_per_sec()
             cv2.imshow(self.cv_window_title, frame)
-            stat, frame = self._new_frame()
             key = cv2.waitKey(20)
             if key == 27: # Esc key
                 self.stop()
-        
+
+    def _frames_per_sec(self):
+        time_now = time.time()
+        time_diff = time_now - self.time_then
+        if time_diff >= 5:
+            fps = self.count / time_diff
+            ic(f"fps: {fps}")
+            self.count = 0
+            self.time_then = time_now
+
     def stop(self):
         self._living_process = False
-        if self._render: cv2.destroyWindow(self.cv_window_title)
+        if self.thread.is_alive: self.thread.join()
         while self.q.qsize(): a=self.q.get()
         self.terminate()
         self.join()
@@ -86,9 +100,11 @@ if __name__ == "__main__":
     try:
         capture_devices = get_capture_devices()
         ic(capture_devices)
+        cam = Camera(0,window_name="0")
+        cam.start()
         if not len(capture_devices): raise CameraNotFound(ic("No Webcams Found"))
-        webcams = [Camera(v4l_cam_id=device, window_name=device) for device in capture_devices]
-        [x.start() for x in webcams]
+        # webcams = [Camera(v4l_cam_id=device, window_name=device) for device in capture_devices]
+        # [x.start() for x in webcams]
 
         pause()
 
