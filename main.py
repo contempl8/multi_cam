@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-from asyncio import subprocess
 from icecream import ic
 import cv2
 from multiprocessing import Process, Queue
@@ -8,6 +7,7 @@ from threading import Thread
 from subprocess import Popen, PIPE
 from signal import pause
 import time
+import click
 
 class CameraNotFound(Exception):
     pass
@@ -15,7 +15,7 @@ class CameraNotFound(Exception):
 class Camera(Process):
     def __init__(self, v4l_cam_id: int | str = "/dev/video0", image_w_h: tuple = (1920,1080), window_name: str = "WebCam", render_window:bool = True) -> None:
     
-        self.process = super().__init__(target=self,daemon=True)
+        super().__init__(target=self,daemon=True)
         self.q = Queue()
         self.img_w, self.img_h = image_w_h
         self.v4l_cam_id = v4l_cam_id
@@ -82,8 +82,6 @@ class Camera(Process):
         self._living_process = False
         if self.thread.is_alive: self.thread.join()
         while self.q.qsize(): a=self.q.get()
-        self.terminate()
-        self.join()
         self.close()
             
 def get_capture_devices():
@@ -96,18 +94,25 @@ def get_capture_devices():
         if proc.stdout.readlines(): capture_devices.append(device)
     return capture_devices
 
+@click.group()
+def cli():
+    pass
+
+@click.command()
+@click.argument('print_framerate',type=click.BOOL,default=True)
+def multiple_cameras(print_framerate):
+        
+    capture_devices = get_capture_devices()
+    ic(capture_devices)
+    if not len(capture_devices): raise CameraNotFound(ic("No Webcams Found"))
+    webcams = [Camera(v4l_cam_id=device, window_name=device) for device in capture_devices]
+    [x.start() for x in webcams]
+    pause()
+
+cli.add_command(multiple_cameras)
+
 if __name__ == "__main__":
     try:
-        capture_devices = get_capture_devices()
-        ic(capture_devices)
-        cam = Camera(0,window_name="0")
-        cam.start()
-        if not len(capture_devices): raise CameraNotFound(ic("No Webcams Found"))
-        # webcams = [Camera(v4l_cam_id=device, window_name=device) for device in capture_devices]
-        # [x.start() for x in webcams]
-
-        pause()
-
+        cli()
     except KeyboardInterrupt:
         ic("Ending Program")
-        [x.stop() for x in webcams]
