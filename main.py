@@ -12,8 +12,16 @@ import click
 class CameraNotFound(Exception):
     pass
 
+class IllegalOperation(Exception):
+    pass
+
 class Camera(Process):
-    def __init__(self, v4l_cam_id: int | str = "/dev/video0", image_w_h: tuple = (1920,1080), window_name: str = "WebCam", render_window:bool = True) -> None:
+    def __init__(self, v4l_cam_id: str = "/dev/video0", 
+                 image_w_h: tuple = (1920,1080), 
+                 window_name: str = "WebCam", 
+                 render_window:bool = True, 
+                 enable_capture:bool = False,
+                 print_framerate:bool = True) -> None:
     
         super().__init__(target=self,daemon=True)
         self.q = Queue()
@@ -23,6 +31,8 @@ class Camera(Process):
         self.cam_inst = None
         self._living_process = False
         self._render = render_window
+        self._enable_capture = enable_capture
+        self._print_framerate = print_framerate
         self.thread = Thread(target=self._framegrabber, daemon=True)
         self.time_then = time.time()
         self.count = 0
@@ -33,7 +43,7 @@ class Camera(Process):
         self._configure_camera()
         self._living_process = True
         self.thread.start()
-        if self._render: self.preview()
+        if self._render and not self._enable_capture: self._preview()
     
     def _connect(self):
 
@@ -56,20 +66,29 @@ class Camera(Process):
         stat, frame = self._new_frame()
         while stat and self._living_process: self.q.put(frame); stat, frame = self._new_frame()
 
-    def get_frame(self):
-        return self.q.get()
+    def _get_frame(self):
+            if self._print_framerate: self._frames_per_sec()
+            return self.q.get()
 
-    def preview(self):
+    def _preview(self):
         while self._living_process:
-            frame = self.q.get()
-            self.count+=1
-            self._frames_per_sec()
-            cv2.imshow(self.cv_window_title, frame)
-            key = cv2.waitKey(20)
-            if key == 27: # Esc key
-                self.stop()
+            self._cv_window(self._get_frame())
+
+    def get_frame(self):
+        if self._enable_capture:
+            frame = self._get_frame()
+            if self._render:
+                self._cv_window(frame)
+            return frame
+
+    def _cv_window(self,frame):
+        cv2.imshow(self.cv_window_title, frame)
+        key = cv2.waitKey(20)
+        if key == 27: # Esc key
+            self.stop()
 
     def _frames_per_sec(self):
+        self.count+=1
         time_now = time.time()
         time_diff = time_now - self.time_then
         if time_diff >= 5:
@@ -99,13 +118,15 @@ def cli():
     pass
 
 @click.command()
-@click.argument('print_framerate',type=click.BOOL,default=True)
-def multiple_cameras(print_framerate):
+@click.option('-pf','--print_framerate',type=click.BOOL,default=True, help='Print out the framerate of that camera stream')
+@click.option('-c','--capture',type=click.BOOL,default=False, help='Enable ability to capture frames by calling get_frames method. Not that useful from CLI')
+@click.option('-r','--render',type=click.BOOL,default=True, help='Enable a render window of stream')
+def multiple_cameras(print_framerate, capture,render):
         
     capture_devices = get_capture_devices()
     ic(capture_devices)
     if not len(capture_devices): raise CameraNotFound(ic("No Webcams Found"))
-    webcams = [Camera(v4l_cam_id=device, window_name=device) for device in capture_devices]
+    webcams = [Camera(v4l_cam_id=device, window_name=device,render_window=render,enable_capture=capture,print_framerate=print_framerate) for device in capture_devices]
     [x.start() for x in webcams]
     pause()
 
